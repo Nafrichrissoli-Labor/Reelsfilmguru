@@ -49,6 +49,8 @@
   const params = new URLSearchParams(window.location.search);
 
   if (params.get("tiktok") === "connected") {
+    localStorage.setItem("tiktokConnected", "true");
+    
     const link = document.querySelector(
       'a[href*="/auth/tiktok/login"]'
     );
