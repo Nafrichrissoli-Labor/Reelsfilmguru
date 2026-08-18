@@ -31,7 +31,26 @@
       Mit TikTok anmelden
     </a>
   </p>
+<h3>TikTok Test-Upload</h3>
 
+<p>
+  Wähle ein MP4-Video aus, um den TikTok-Sandbox-Upload zu testen.
+</p>
+
+<input
+  type="file"
+  id="tiktokVideo"
+  accept="video/mp4"
+/>
+
+<p>
+  <button id="tiktokUploadButton" type="button">
+    Testvideo vorbereiten
+  </button>
+</p>
+
+<p id="tiktokUploadStatus"></p>
+  
   <h2>Rechtliche Informationen</h2>
 
   <p>
@@ -46,6 +65,77 @@
     <p>&copy; 2026 Reels Film Guru</p>
   </footer>
   <script>
+    const tiktokVideo = document.getElementById("tiktokVideo");
+const tiktokUploadButton = document.getElementById("tiktokUploadButton");
+const tiktokUploadStatus = document.getElementById("tiktokUploadStatus");
+
+tiktokUploadButton.addEventListener("click", async () => {
+  const file = tiktokVideo.files[0];
+
+  if (!file) {
+    tiktokUploadStatus.textContent =
+      "Bitte zuerst ein MP4-Video auswählen.";
+    return;
+  }
+
+  if (file.type !== "video/mp4") {
+    tiktokUploadStatus.textContent =
+      "Bitte eine MP4-Datei auswählen.";
+    return;
+  }
+
+  tiktokUploadStatus.textContent =
+    "TikTok-Veröffentlichung wird vorbereitet...";
+
+  try {
+    const response = await fetch(
+      "https://tiktok-oauth-backend.nafrichrissoli.workers.dev/api/tiktok/post/init",
+      {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          post_info: {
+            title: file.name,
+            privacy_level: "SELF_ONLY",
+            disable_duet: false,
+            disable_comment: false,
+            disable_stitch: false,
+          },
+          source_info: {
+            source: "FILE_UPLOAD",
+            video_size: file.size,
+            chunk_size: file.size,
+            total_chunk_count: 1,
+          },
+        }),
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        data.error?.message ||
+        data.error ||
+        JSON.stringify(data)
+      );
+    }
+
+    console.log("TikTok Init:", data);
+
+    tiktokUploadStatus.textContent =
+      "TikTok hat den Upload vorbereitet. Publish-ID: " +
+      (data.data?.publish_id || "nicht angegeben");
+  } catch (error) {
+    console.error(error);
+
+    tiktokUploadStatus.textContent =
+      "Fehler: " + error.message;
+  }
+});
   const params = new URLSearchParams(window.location.search);
 
   if (params.get("tiktok") === "connected" || localStorage.getItem("tiktokConnected") === "true") {
