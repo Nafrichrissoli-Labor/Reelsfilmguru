@@ -45,5 +45,22 @@
   <footer>
     <p>&copy; 2026 Reels Film Guru</p>
   </footer>
+  <script>
+  const params = new URLSearchParams(window.location.search);
+
+  if (params.get("tiktok") === "connected") {
+    const link = document.querySelector(
+      'a[href*="/auth/tiktok/login"]'
+    );
+
+    if (link) {
+      link.textContent = "✓ TikTok verbunden";
+      link.removeAttribute("href");
+      link.style.pointerEvents = "none";
+    }
+
+    window.history.replaceState({}, document.title, window.location.pathname);
+  }
+</script>
 </body>
 </html>
