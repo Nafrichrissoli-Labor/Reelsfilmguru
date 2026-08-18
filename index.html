@@ -48,7 +48,7 @@
   <script>
   const params = new URLSearchParams(window.location.search);
 
-  if (params.get("tiktok") === "connected") {
+  if (params.get("tiktok") === "connected" || localStorage.getItem("tiktokConnected") === "true") {
     localStorage.setItem("tiktokConnected", "true");
     
     const link = document.querySelector(
