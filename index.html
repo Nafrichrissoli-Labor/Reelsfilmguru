@@ -65,94 +65,157 @@
     <p>&copy; 2026 Reels Film Guru</p>
   </footer>
   <script>
+    const API_BASE = "https://tiktok-oauth-backend.nafrichrissoli.workers.dev";
+    const SESSION_KEY = "rfgTikTokSession";
     const tiktokVideo = document.getElementById("tiktokVideo");
-const tiktokUploadButton = document.getElementById("tiktokUploadButton");
-const tiktokUploadStatus = document.getElementById("tiktokUploadStatus");
+    const tiktokUploadButton = document.getElementById("tiktokUploadButton");
+    const tiktokUploadStatus = document.getElementById("tiktokUploadStatus");
 
-tiktokUploadButton.addEventListener("click", async () => {
-  const file = tiktokVideo.files[0];
+    function sessionHeaders(extra = {}) {
+      const session = localStorage.getItem(SESSION_KEY);
+      return { ...extra, ...(session ? { Authorization: `Bearer ${session}` } : {}) };
+    }
 
-  if (!file) {
-    tiktokUploadStatus.textContent =
-      "Bitte zuerst ein MP4-Video auswählen.";
-    return;
-  }
-
-  if (file.type !== "video/mp4") {
-    tiktokUploadStatus.textContent =
-      "Bitte eine MP4-Datei auswählen.";
-    return;
-  }
-
-  tiktokUploadStatus.textContent =
-    "TikTok-Veröffentlichung wird vorbereitet...";
-
-  try {
-    const response = await fetch(
-      "https://tiktok-oauth-backend.nafrichrissoli.workers.dev/api/tiktok/post/init",
-      {
-        method: "POST",
+    async function api(path, options = {}) {
+      const response = await fetch(`${API_BASE}${path}`, {
         credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          post_info: {
-            title: file.name,
-            privacy_level: "SELF_ONLY",
-            disable_duet: false,
-            disable_comment: false,
-            disable_stitch: false,
-          },
-          source_info: {
-            source: "FILE_UPLOAD",
-            video_size: file.size,
-            chunk_size: file.size,
-            total_chunk_count: 1,
-          },
-        }),
+        ...options,
+        headers: sessionHeaders(options.headers),
+      });
+      const data = await response.json();
+      if (!response.ok || data.error?.code && data.error.code !== "ok") {
+        const message = data.error?.message || data.error || data.details || `HTTP ${response.status}`;
+        throw new Error(typeof message === "string" ? message : JSON.stringify(message));
       }
-    );
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(
-        data.error?.message ||
-        data.error ||
-        JSON.stringify(data)
-      );
+      return data;
     }
 
-    console.log("TikTok Init:", data);
-
-    tiktokUploadStatus.textContent =
-      "TikTok hat den Upload vorbereitet. Publish-ID: " +
-      (data.data?.publish_id || "nicht angegeben");
-  } catch (error) {
-    console.error(error);
-
-    tiktokUploadStatus.textContent =
-      "Fehler: " + error.message;
-  }
-});
-  const params = new URLSearchParams(window.location.search);
-
-  if (params.get("tiktok") === "connected" || localStorage.getItem("tiktokConnected") === "true") {
-    localStorage.setItem("tiktokConnected", "true");
-    
-    const link = document.querySelector(
-      'a[href*="/auth/tiktok/login"]'
-    );
-
-    if (link) {
-      link.textContent = "✓ TikTok verbunden";
-      link.removeAttribute("href");
-      link.style.pointerEvents = "none";
+    function markConnected(connected) {
+      const link = document.querySelector('a[href*="/auth/tiktok/login"], a[data-tiktok-connected]');
+      if (!link) return;
+      if (connected) {
+        link.textContent = "✓ TikTok verbunden";
+        link.removeAttribute("href");
+        link.dataset.tiktokConnected = "true";
+        link.style.pointerEvents = "none";
+      }
     }
 
-    window.history.replaceState({}, document.title, window.location.pathname);
-  }
-</script>
+    async function acceptOAuthHandoff() {
+      const params = new URLSearchParams(window.location.hash.slice(1));
+      const code = params.get("code");
+      if (params.get("tiktok") !== "connected" || !code) return;
+      const data = await api("/api/session/exchange", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      localStorage.setItem(SESSION_KEY, data.session);
+      window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
+    }
+
+    function chunksFor(file) {
+      const maxChunk = 64 * 1024 * 1024;
+      if (file.size <= maxChunk) return [{ start: 0, end: file.size }];
+      const count = Math.ceil(file.size / maxChunk);
+      const chunkSize = Math.floor(file.size / count);
+      const chunks = [];
+      for (let index = 0; index < count; index += 1) {
+        const start = index * chunkSize;
+        const end = index === count - 1 ? file.size : start + chunkSize;
+        chunks.push({ start, end });
+      }
+      return chunks;
+    }
+
+    async function uploadChunks(file, publishId, chunks) {
+      for (let index = 0; index < chunks.length; index += 1) {
+        const { start, end } = chunks[index];
+        tiktokUploadStatus.textContent = `Video wird hochgeladen (${index + 1}/${chunks.length})...`;
+        await api(`/api/tiktok/post/upload?publish_id=${encodeURIComponent(publishId)}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": file.type,
+            "Content-Range": `bytes ${start}-${end - 1}/${file.size}`,
+          },
+          body: file.slice(start, end),
+        });
+      }
+    }
+
+    async function waitForPublish(publishId) {
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        const result = await api("/api/tiktok/post/status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ publish_id: publishId }),
+        });
+        const status = result.data?.status;
+        tiktokUploadStatus.textContent = `TikTok-Status: ${status || "unbekannt"}`;
+        if (status === "PUBLISH_COMPLETE") return;
+        if (status === "FAILED") throw new Error(result.data?.fail_reason || "TikTok-Verarbeitung fehlgeschlagen");
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+      tiktokUploadStatus.textContent = "Upload abgeschlossen; TikTok verarbeitet das Video weiter.";
+    }
+
+    tiktokUploadButton.addEventListener("click", async () => {
+      const file = tiktokVideo.files[0];
+      if (!file || file.type !== "video/mp4") {
+        tiktokUploadStatus.textContent = "Bitte zuerst eine MP4-Datei auswählen.";
+        return;
+      }
+
+      tiktokUploadButton.disabled = true;
+      try {
+        tiktokUploadStatus.textContent = "TikTok-Kontodaten werden geprüft...";
+        const creator = await api("/api/tiktok/creator-info", { method: "POST" });
+        const privacyOptions = creator.data?.privacy_level_options || [];
+        if (!privacyOptions.includes("SELF_ONLY")) throw new Error("SELF_ONLY ist für dieses TikTok-Konto nicht verfügbar.");
+
+        const chunks = chunksFor(file);
+        const init = await api("/api/tiktok/post/init", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            post_info: {
+              title: file.name.replace(/\.mp4$/i, ""),
+              privacy_level: "SELF_ONLY",
+              disable_duet: Boolean(creator.data?.duet_disabled),
+              disable_comment: Boolean(creator.data?.comment_disabled),
+              disable_stitch: Boolean(creator.data?.stitch_disabled),
+            },
+            source_info: {
+              source: "FILE_UPLOAD",
+              video_size: file.size,
+              chunk_size: chunks[0].end - chunks[0].start,
+              total_chunk_count: chunks.length,
+            },
+          }),
+        });
+        const publishId = init.data?.publish_id;
+        if (!publishId) throw new Error("TikTok hat keine Publish-ID zurückgegeben.");
+        await uploadChunks(file, publishId, chunks);
+        await waitForPublish(publishId);
+      } catch (error) {
+        console.error(error);
+        if (/not connected|401/i.test(error.message)) localStorage.removeItem(SESSION_KEY);
+        tiktokUploadStatus.textContent = `Fehler: ${error.message}`;
+      } finally {
+        tiktokUploadButton.disabled = false;
+      }
+    });
+
+    (async () => {
+      try {
+        await acceptOAuthHandoff();
+        const status = await api("/api/tiktok/status");
+        markConnected(status.connected && String(status.scope || "").split(",").includes("video.publish"));
+      } catch (error) {
+        console.error("TikTok connection check failed", error);
+        localStorage.removeItem(SESSION_KEY);
+      }
+    })();
+  </script>
 </body>
 </html>
